@@ -1,0 +1,6 @@
+SshBeacon.exe
+*.pdb
+*.log
+*.png
+build.out
+build.err
