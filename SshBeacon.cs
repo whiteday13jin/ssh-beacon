@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -590,80 +590,9 @@ namespace SshBeacon
 
         private void DrawDot(BeaconState st, DateTime now)
         {
-            Color baseColor;
-            double alpha;
-            float radius = 6.6f;
-            float glow = 11f;
-
-            switch (st)
-            {
-                case BeaconState.Connected:
-                    baseColor = Color.FromArgb(255, 196, 20);
-                    double phase = (now - _connectedSinceUtc).TotalSeconds * 2.2;
-                    double pulse = 0.5 + 0.5 * Math.Sin(phase);
-                    alpha = 0.5 + 0.5 * pulse;
-                    glow = 10f + 5f * (float)pulse;
-                    break;
-                case BeaconState.Linger:
-                    baseColor = Color.FromArgb(255, 196, 20);
-                    double remain = 1.0 - (now - _lastConnUtc).TotalSeconds / LingerSeconds;
-                    if (remain < 0) remain = 0;
-                    alpha = 0.34 * remain;
-                    glow = 9f;
-                    break;
-                case BeaconState.Error:
-                    baseColor = Color.FromArgb(255, 69, 58);
-                    alpha = 0.9;
-                    glow = 11f;
-                    break;
-                default:
-                    baseColor = Color.FromArgb(190, 196, 205);
-                    alpha = 0.34;
-                    glow = 9f;
-                    break;
-            }
-
-            using (Graphics g = Graphics.FromImage(_dot.Canvas))
-            {
-                g.Clear(Color.Transparent);
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-                float cx = DotWindow.SizePx / 2f;
-                float cy = cx;
-
-                using (GraphicsPath path = new GraphicsPath())
-                {
-                    path.AddEllipse(cx - glow, cy - glow, glow * 2, glow * 2);
-                    using (PathGradientBrush pgb = new PathGradientBrush(path))
-                    {
-                        pgb.CenterColor = Color.FromArgb(LayeredWindow.AlphaOf(alpha * 0.5), baseColor);
-                        pgb.SurroundColors = new Color[] { Color.FromArgb(0, baseColor) };
-                        g.FillPath(pgb, path);
-                    }
-                }
-
-                using (SolidBrush core = new SolidBrush(Color.FromArgb(LayeredWindow.AlphaOf(alpha), baseColor)))
-                {
-                    g.FillEllipse(core, cx - radius, cy - radius, radius * 2, radius * 2);
-                }
-                using (SolidBrush spec = new SolidBrush(Color.FromArgb(LayeredWindow.AlphaOf(alpha * 0.55), Color.White)))
-                {
-                    g.FillEllipse(spec, cx - radius * 0.62f, cy - radius * 0.78f, radius * 0.62f, radius * 0.5f);
-                }
-
-                if (now < _flashUntilUtc)
-                {
-                    double p = 1.0 - (_flashUntilUtc - now).TotalSeconds;
-                    if (p < 0) p = 0;
-                    if (p > 1) p = 1;
-                    float r = 7f + 16f * (float)p;
-                    using (Pen pen = new Pen(Color.FromArgb(LayeredWindow.AlphaOf((1 - p) * 0.7), Color.FromArgb(255, 214, 64)), 2f))
-                    {
-                        g.DrawEllipse(pen, cx - r, cy - r, r * 2, r * 2);
-                    }
-                }
-            }
+            BeaconVisuals.Draw(_dot.Canvas, st,
+                (now - _connectedSinceUtc).TotalSeconds,
+                (now - _lastConnUtc).TotalSeconds, LingerSeconds);
         }
 
         private void UpdateText()
@@ -1029,6 +958,14 @@ namespace SshBeacon
         [STAThread]
         private static void Main(string[] args)
         {
+            // Preview is isolated: no polling, tray, settings, startup registration or singleton.
+            if (args.Length == 1 && args[0] == "--preview")
+            {
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                Application.Run(new VisualPreview());
+                return;
+            }
             bool created;
             using (Mutex mutex = new Mutex(true, "SshBeacon_SingleInstance", out created))
             {
