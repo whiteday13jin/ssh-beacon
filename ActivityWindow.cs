@@ -119,8 +119,8 @@ namespace SshBeacon
             bool selected = (e.State & DrawItemState.Selected) != 0 && list.Focused;
             using (Pen edge = new Pen(selected ? Color.FromArgb(116, 157, 137) : Color.FromArgb(211, 226, 217)))
                 g.DrawRectangle(edge, box.X, box.Y, box.Width-1, box.Height-1);
-            Color accent = item.Action.StartsWith("收到") ? Color.FromArgb(24,117,91) :
-                item.Action.StartsWith("发出") ? Color.FromArgb(49,99,168) : Color.FromArgb(133,91,34);
+            Color accent = (item.Action.StartsWith("收到") || item.Action.StartsWith("对方请求上传")) ? Color.FromArgb(24,117,91) :
+                (item.Action.StartsWith("发出") || item.Action.StartsWith("对方请求下载")) ? Color.FromArgb(49,99,168) : Color.FromArgb(133,91,34);
             int x = box.X + 12, right = box.Right - 12, y = box.Y + 5, h = Font.Height + 2;
             TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis |
                 TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix;

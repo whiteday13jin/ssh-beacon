@@ -36,11 +36,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
 
 ### 启用文件收发记录
 
-先运行构建脚本，再在管理员 PowerShell 中运行 `Enable-SftpHistory.ps1`。安装器备份并验证 OpenSSH 配置，检查当前连接后重启服务，为安装时指定的 Windows 账号启用记录。恢复配置可使用同目录的 `sshd_config.sshbeacon-*.bak`，核对后重启 sshd。
+在管理员 PowerShell 中运行 `Enable-SftpHistory.ps1`。脚本将默认或旧版 Beacon 子系统迁移到 `sftp-server.exe -l INFO`，备份并校验配置后重启 SSH 服务。已有 SSH 连接时会暂缓重启。恢复时可使用同目录的 `sshd_config.sshbeacon-*.bak`，核对后重启 sshd。
 
-SFTP 子系统入口调用系统自带的 `sftp-server.exe`。它把当前账号的 INFO 诊断输出交给本地记录器，标准输入输出继续用于 SFTP 协议。磁盘保存时间、来源 IP、文件名、本机路径和方向。收发卡片末行显示本机路径，单击路径可在资源管理器中选中文件，长路径可悬停查看，选中卡片按 Ctrl+C 可复制整条记录。旧记录沿用原有信息。收到或发出按实际读写字节判定，零字节操作没有方向记录。普通 SSH 命令与旧式 SCP 协议不经过这个入口。
+Windows 原生 SFTP 服务直接处理文件传输并将操作写入 `OpenSSH/Operational`。打开日志时，Beacon 按当前 Windows 账号读取最近 7 天的事件，用 SFTP 服务进程 ID 关联来源设备，根据实际读写字节区分收发。零字节操作按打开模式显示“对方请求下载”“对方请求上传”或“访问文件”。运行中收到文件关闭事件也会点亮未读角标并发出托盘通知，同一批文件合并提示。传统 SCP（`scp -O`）和通过普通 SSH 命令写入的文件只会产生相应的 SSH 登录记录。
 
-记录保存在当前账号的 `%LOCALAPPDATA%\SshBeacon\Transfers`，保留当天及之前六个本地日期。计划任务每天 00:05 清理，错过时在系统可用后补跑；打开日志时也检查过期记录。
+收发卡片显示本机路径，单击可在资源管理器中选中文件。历史版本保存在 `%LOCALAPPDATA%\SshBeacon\Transfers` 的记录继续可读并沿用原清理规则。原生事件日志按 Windows 通道容量滚动，文件路径可能保留超过 7 天。
 
 - `SshBeacon.cs`：源码
 - `build.ps1`：编译脚本

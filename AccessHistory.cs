@@ -25,10 +25,12 @@ namespace SshBeacon
     internal sealed class LoginBatch
     {
         internal readonly List<Login> Items = new List<Login>();
+        internal List<Transfer> Transfers = new List<Transfer>();
         internal long LatestId;
         internal static LoginBatch Read(long afterId)
         {
             LoginBatch result = new LoginBatch();
+            var closes = new HashSet<long>();
             EventLogQuery query = new EventLogQuery("OpenSSH/Operational", PathType.LogName,
                 "*[System[Provider[@Name='OpenSSH'] and TimeCreated[timediff(@SystemTime) <= 604800000]]]");
             query.ReverseDirection = true;
@@ -44,13 +46,17 @@ namespace SshBeacon
                         if (id == afterId) break;
                         var fields = record.Properties;
                         if (fields.Count < 2 || !record.TimeCreated.HasValue) continue;
-                        Login login = Login.Parse(fields[1].Value as string, record.TimeCreated.Value.ToUniversalTime());
+                        string payload = fields[1].Value as string ?? "";
+                        if (Equals(fields[0].Value, "sftp-server") && (payload.StartsWith("close \"", StringComparison.Ordinal) ||
+                            payload.StartsWith("forced close \"", StringComparison.Ordinal))) closes.Add(id);
+                        Login login = Login.Parse(payload, record.TimeCreated.Value.ToUniversalTime());
                         if (login != null) result.Items.Add(login);
                         if (afterId == 0 && result.Items.Count >= 1000) break;
                     }
                 }
             }
             result.Items.Reverse();
+            if (closes.Count > 0) result.Transfers = Transfer.ReadNative(closes);
             return result;
         }
     }

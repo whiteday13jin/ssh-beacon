@@ -26,7 +26,8 @@ namespace SshBeacon
             Check(upload.Name == "测试.txt" && upload.Action == "收到文件", "Chinese filename and incoming direction");
             Check(Transfer.Parse(@"close ""/D:/资料/测试.txt"" bytes read 20 written 0", when, "::1").LocalPath == @"D:\资料\测试.txt", "SFTP drive path displays as a Windows path");
             Check(Transfer.Parse(@"close ""a.txt"" bytes read 24 written 0", when, "::1").Action == "发出文件", "Outgoing direction");
-            Check(Transfer.Parse(@"close ""a.txt"" bytes read 0 written 0", when, "::1") == null, "Do not infer direction from zero bytes");
+            Check(Transfer.Parse(@"close ""a.txt"" bytes read 0 written 0", when, "::1").Action == "访问文件（0 字节）", "No direction without open flags");
+            Check(Transfer.Parse(@"close ""a.txt"" bytes read 0 written 0", when, "::1", "READ").Action == "对方请求下载（0 字节）", "Empty read shows the remote download request");
             string folder = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())).FullName;
             try
             {

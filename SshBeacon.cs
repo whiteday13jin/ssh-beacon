@@ -378,6 +378,7 @@ namespace SshBeacon
         private readonly System.ComponentModel.BackgroundWorker _logReader = new System.ComponentModel.BackgroundWorker();
         private DateTime _nextReadUtc;
         private long _latestRecord, _readTicks;
+        private long _lastActivityTicks;
         private bool _loaded, _unread, _closing;
         private string _historyError;
         private readonly ContextMenuStrip _menu;
@@ -833,20 +834,27 @@ namespace SshBeacon
                 return;
             }
             LoginBatch batch = (LoginBatch)e.Result;
-            bool refresh = !_loaded || _historyError != null || batch.Items.Count > 0;
+            bool refresh = !_loaded || _historyError != null || batch.Items.Count > 0 || batch.Transfers.Count > 0;
             _historyError = null;
             Login notify = null;
             foreach (Login login in batch.Items)
             {
                 if (_history.Add(login) && _loaded) notify = login;
-                if (login.Utc.Ticks > _readTicks) _unread = true;
+                _lastActivityTicks = Math.Max(_lastActivityTicks, login.Utc.Ticks);
             }
+            Transfer transfer = batch.Transfers.Count == 0 ? null : batch.Transfers[0];
+            if (transfer != null) _lastActivityTicks = Math.Max(_lastActivityTicks, transfer.Utc.Ticks);
+            _unread = _lastActivityTicks > _readTicks;
+            bool notifyTransfer = _loaded && transfer != null;
             _latestRecord = batch.LatestId;
             _loaded = true;
             if (!refresh) return;
             _tray.Icon = _unread ? _unreadIcon : _plainIcon;
             UpdateText();
-            if (notify != null)
+            if (notifyTransfer)
+                _tray.ShowBalloonTip(3500, transfer.Action, PeerName(transfer.Device) + " · " + transfer.Name +
+                    (batch.Transfers.Count > 1 ? "（本次共 " + batch.Transfers.Count + " 条文件记录）" : ""), ToolTipIcon.None);
+            else if (notify != null)
                 _tray.ShowBalloonTip(3500, "有设备通过 SSH 登录了这台电脑", DeviceLabel(notify) + " · 账号 " + notify.User, ToolTipIcon.None);
         }
 
@@ -858,8 +866,8 @@ namespace SshBeacon
 
         private void MarkRead()
         {
-            if (!_unread || _history.Recent.Count == 0) return;
-            _readTicks = _history.Recent[0].Last.Ticks;
+            if (!_unread) return;
+            _readTicks = _lastActivityTicks;
             _unread = false;
             _tray.Icon = _plainIcon;
             WriteSetting("read_ticks", _readTicks.ToString(CultureInfo.InvariantCulture));

@@ -7,6 +7,3 @@ $a = @('/nologo', '/target:winexe', '/main:SshBeacon.Program', '/codepage:65001'
 & $csc $a
 if ($LASTEXITCODE -ne 0) { throw "compile failed: $LASTEXITCODE" }
 "built: $dir\SshBeacon.exe"
-
-& $csc /nologo /target:exe /platform:x64 /codepage:65001 "/out:$dir\SftpAudit.exe" "$dir\SftpAudit.cs"
-if ($LASTEXITCODE -ne 0) { throw 'SFTP helper build failed' }
