@@ -11,6 +11,7 @@ namespace SshBeacon
     // No rings, borders, specular marks, hard disk or perpetual travelling decoration.
     internal static class BeaconVisuals
     {
+        internal const double HaloTurnSeconds = 28.8;
         private static double Clamp(double x) { return Math.Max(0, Math.Min(1, x)); }
         private static double Smooth(double x) { x = Clamp(x); return x * x * (3 - 2 * x); }
 
@@ -22,21 +23,23 @@ namespace SshBeacon
                 ? 1 - Smooth(disconnectedSeconds / Math.Max(0.001, lingerSeconds)) : 1;
             double breathAge = state == BeaconState.Linger
                 ? Math.Max(0, age - Math.Max(0, disconnectedSeconds)) : age;
-            // Independent, slow optical drift: core and diffusion do not pulse in lockstep.
-            double breath = 0.5 - 0.5 * Math.Cos(breathAge * Math.PI * 2 / 5.8);
+            // 光核固定，内外光晕错开一点达到峰值，让光像从中心慢慢散开。
+            double phase = breathAge * Math.PI * 2 / 4.8;
+            double breath = -Math.Cos(phase);
+            double outerBreath = -Math.Cos(phase - 0.32);
             bool error = state == BeaconState.Error;
             double opacity = state == BeaconState.Idle ? 0 : fade * (error ? 1 : Smooth(age / 0.8));
-            if (error) breath = 0.5;
-            double energy = 0.93 + 0.07 * breath;
-            double t = error ? 0 : breathAge;
-            double coreX = 0.24 * Math.Sin(t * 0.63), coreY = 0.18 * Math.Sin(t * 0.47 + 1.2);
-            double haloX = 0.7 + 0.9 * Math.Sin(t * 0.37), haloY = -0.6 + 0.7 * Math.Sin(t * 0.29 + 0.7);
-            double angle = 0.4 + 0.28 * Math.Sin(t * 0.22);
+            if (error) breath = outerBreath = 0;
+            double energy = 0.965 + 0.035 * breath;
+            double angle = -0.48 + (error ? 0 : breathAge % HaloTurnSeconds * 2 * Math.PI / HaloTurnSeconds);
             double co = Math.Cos(angle), si = Math.Sin(angle);
-            double spreadX = 1.12 + 0.06 * Math.Sin(t * 0.51 + 0.4);
-            double spreadY = 0.89 + 0.04 * Math.Sin(t * 0.43 + 1.6);
-            double haloEnergy = 0.93 + 0.07 * Math.Sin(t * 0.71 + 0.9);
-            double outerEnergy = 0.94 + 0.06 * Math.Sin(t * 0.33 + 2.1);
+            double haloX = 1.1 * co, haloY = 1.1 * si;
+            // 沿斜轴两侧分别控制衰减宽度，在轴心处自然接平。
+            double longSide = 1.30 + 0.28 * breath;
+            double shortSide = 0.88 + 0.07 * outerBreath;
+            double spreadY = 0.94 + 0.07 * outerBreath;
+            double haloEnergy = 1 + 0.20 * breath;
+            double outerEnergy = 1 + 0.18 * outerBreath;
             int w = canvas.Width, h = canvas.Height;
             byte[] pixels = new byte[w * h * 4];
             double cx = (w - 1) / 2.0, cy = (h - 1) / 2.0;
@@ -45,13 +48,13 @@ namespace SshBeacon
             {
                 double dx = (x - cx) / 1.06, dy = (y - cy) / 1.06, r2 = dx * dx + dy * dy;
                 // A resolved warm emitter, with a gently offset, unequal light field.
-                double nx = dx - coreX, ny = dy - coreY;
-                double coreRadius = nx * nx + ny * ny;
+                double coreRadius = r2;
                 double hx = dx - haloX, hy = dy - haloY;
-                double u = (hx * co + hy * si) / spreadX;
+                double axial = hx * co + hy * si;
+                double u = axial / (axial >= 0 ? longSide : shortSide);
                 double v = (-hx * si + hy * co) / spreadY;
-                double ox = (dx + 0.7 * Math.Sin(t * 0.26 + 1)) / 0.97;
-                double oy = (dy - 0.6 * Math.Cos(t * 0.31)) / 1.03;
+                double ox = (dx + 0.6) / 0.97;
+                double oy = (dy - 0.6) / 1.03;
                 double nucleus = Math.Exp(-coreRadius / 11.0);
                 double diffusion = Math.Exp(-(u * u + v * v) / 69.0);
                 double atmosphere = Math.Exp(-(ox * ox + oy * oy) / 230.0);
@@ -116,9 +119,10 @@ namespace SshBeacon
             base.OnPaint(e);
             Graphics g = e.Graphics;
             g.Clear(_light ? Color.FromArgb(244, 244, 240) : Color.FromArgb(20, 24, 30));
-            double t = _clock.Elapsed.TotalSeconds % 16;
-            BeaconState state = t < 7 ? BeaconState.Connected : t < 13 ? BeaconState.Linger : BeaconState.Idle;
-            BeaconVisuals.Draw(_frame, state, t, Math.Max(0, t - 7), 6);
+            const double connectedDuration = BeaconVisuals.HaloTurnSeconds + 1;
+            double t = _clock.Elapsed.TotalSeconds % (connectedDuration + 9);
+            BeaconState state = t < connectedDuration ? BeaconState.Connected : t < connectedDuration + 6 ? BeaconState.Linger : BeaconState.Idle;
+            BeaconVisuals.Draw(_frame, state, t, Math.Max(0, t - connectedDuration), 6);
             using (SolidBrush text = new SolidBrush(_light ? Color.FromArgb(40, 44, 50) : Color.FromArgb(226, 231, 239)))
             using (SolidBrush muted = new SolidBrush(_light ? Color.FromArgb(100, 106, 114) : Color.FromArgb(144, 154, 168)))
             {

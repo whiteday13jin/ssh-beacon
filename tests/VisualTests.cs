@@ -77,6 +77,10 @@ namespace SshBeacon
                     previous = current;
                 }
                 Check(previous == 0, "Six-second fade is monotonic and ends invisible");
+                BeaconVisuals.Draw(b, BeaconState.Connected, 2.4, 0, 6);
+                Check(b.GetPixel(46, 36).A > b.GetPixel(25, 35).A, "Halo reaches farther right at the first breath peak");
+                BeaconVisuals.Draw(b, BeaconState.Connected, 2.4 + BeaconVisuals.HaloTurnSeconds / 2, 0, 6);
+                Check(b.GetPixel(25, 35).A > b.GetPixel(46, 36).A, "Halo reaches farther left half a turn later");
                 BeaconVisuals.Draw(b, BeaconState.Error, 1, 0, 6); long error = Alpha(b);
                 BeaconVisuals.Draw(b, BeaconState.Error, 99, 0, 6);
                 Check(error > 0 && Alpha(b) == error && b.GetPixel(36,36).R > b.GetPixel(36,36).G, "Error stays steady red");
