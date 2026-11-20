@@ -4,3 +4,4 @@ SshBeacon.exe
 *.png
 build.out
 build.err
+SftpAudit.exe

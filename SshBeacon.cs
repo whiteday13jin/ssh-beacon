@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -373,6 +373,13 @@ namespace SshBeacon
         private readonly DotWindow _dot;
         private readonly PillWindow _pill;
         private readonly NotifyIcon _tray;
+        private readonly Icon _plainIcon, _unreadIcon;
+        private readonly VisitHistory _history = new VisitHistory();
+        private readonly System.ComponentModel.BackgroundWorker _logReader = new System.ComponentModel.BackgroundWorker();
+        private DateTime _nextReadUtc;
+        private long _latestRecord, _readTicks;
+        private bool _loaded, _unread, _closing;
+        private string _historyError;
         private readonly ContextMenuStrip _menu;
         private readonly ToolStripMenuItem _menuStatus;
         private readonly ToolStripMenuItem _menuAutoStart;
@@ -413,6 +420,7 @@ namespace SshBeacon
             Log("start " + Application.ExecutablePath);
 
             LoadSettings();
+            long.TryParse(ReadSetting("read_ticks", "0"), out _readTicks);
 
             _dot = new DotWindow();
             _pill = new PillWindow();
@@ -420,7 +428,7 @@ namespace SshBeacon
             _menu = new ContextMenuStrip();
             _menuStatus = new ToolStripMenuItem("远程 SSH：未连接");
             _menuStatus.Enabled = false;
-            ToolStripMenuItem openLog = new ToolStripMenuItem("打开日志");
+            ToolStripMenuItem openLog = new ToolStripMenuItem("查看访问日志");
             openLog.Click += delegate { OpenLog(); };
             ToolStripMenuItem resetPos = new ToolStripMenuItem("重置位置");
             resetPos.Click += delegate { ResetPosition(); };
@@ -444,11 +452,19 @@ namespace SshBeacon
             _dot.DragFinished += delegate { SaveSettings(); };
 
             _tray = new NotifyIcon();
-            _tray.Icon = BuildTrayIcon();
+            _plainIcon = BuildTrayIcon(false);
+            _unreadIcon = BuildTrayIcon(true);
+            _tray.Icon = _plainIcon;
             _tray.Text = "SSH 提示";
             _tray.Visible = true;
             _tray.ContextMenuStrip = _menu;
             _tray.DoubleClick += delegate { ResetPosition(); };
+            _tray.MouseClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) MarkRead(); };
+            _logReader.DoWork += delegate(object sender, System.ComponentModel.DoWorkEventArgs e)
+            {
+                e.Result = LoginBatch.Read((long)e.Argument);
+            };
+            _logReader.RunWorkerCompleted += OnHistoryRead;
 
             _pollTimer = new System.Windows.Forms.Timer();
             _pollTimer.Interval = PollIntervalMs;
@@ -496,6 +512,11 @@ namespace SshBeacon
 
         private void Poll()
         {
+            if (!_logReader.IsBusy && DateTime.UtcNow >= _nextReadUtc)
+            {
+                _nextReadUtc = DateTime.UtcNow.AddSeconds(3);
+                _logReader.RunWorkerAsync(_latestRecord);
+            }
             try
             {
                 List<string> sources = new List<string>();
@@ -629,7 +650,12 @@ namespace SshBeacon
                     break;
             }
             _menuStatus.Text = "远程 SSH：" + StateWord(_state);
-            string txt = "SSH 提示 · " + StateWord(_state);
+            string txt = _historyError != null ? "SSH 登录记录暂时无法读取" : "SSH 提示 · " + StateWord(_state);
+            if (_history.Recent.Count > 0)
+            {
+                Visit last = _history.Recent[0];
+                txt += (_unread ? " · 未读 " : " · 最近 ") + last.Last.ToLocalTime().ToString("MM-dd HH:mm") + " " + last.First.Address;
+            }
             if (txt.Length > 62) txt = txt.Substring(0, 62);
             _tray.Text = txt;
         }
@@ -795,14 +821,84 @@ namespace SshBeacon
             RenderTick();
         }
 
+        private void OnHistoryRead(object sender, System.ComponentModel.RunWorkerCompletedEventArgs e)
+        {
+            if (_closing) return;
+            if (e.Error != null)
+            {
+                if (_historyError == null) Log("读取 SSH 登录记录失败：" + e.Error.Message);
+                _historyError = "暂时无法读取 Windows 的 SSH 登录记录。组件会自动重试。";
+                _nextReadUtc = DateTime.UtcNow.AddSeconds(15);
+                UpdateText();
+                return;
+            }
+            LoginBatch batch = (LoginBatch)e.Result;
+            bool refresh = !_loaded || _historyError != null || batch.Items.Count > 0;
+            _historyError = null;
+            Login notify = null;
+            foreach (Login login in batch.Items)
+            {
+                if (_history.Add(login) && _loaded) notify = login;
+                if (login.Utc.Ticks > _readTicks) _unread = true;
+            }
+            _latestRecord = batch.LatestId;
+            _loaded = true;
+            if (!refresh) return;
+            _tray.Icon = _unread ? _unreadIcon : _plainIcon;
+            UpdateText();
+            if (notify != null)
+                _tray.ShowBalloonTip(3500, "有设备通过 SSH 登录了这台电脑", DeviceLabel(notify) + " · 账号 " + notify.User, ToolTipIcon.None);
+        }
+
+        private string DeviceLabel(Login login)
+        {
+            string name = PeerName(login.Address);
+            return name == login.Address ? name : name + " (" + login.Address + ")";
+        }
+
+        private void MarkRead()
+        {
+            if (!_unread || _history.Recent.Count == 0) return;
+            _readTicks = _history.Recent[0].Last.Ticks;
+            _unread = false;
+            _tray.Icon = _plainIcon;
+            WriteSetting("read_ticks", _readTicks.ToString(CultureInfo.InvariantCulture));
+            UpdateText();
+        }
+
         private void OpenLog()
         {
+            List<ActivityCard> cards = new List<ActivityCard>();
             try
             {
-                if (!File.Exists(_logPath)) File.WriteAllText(_logPath, "");
-                Process.Start(new ProcessStartInfo(_logPath) { UseShellExecute = true });
+                foreach (Transfer t in Transfer.Read())
+                {
+                    string device = t.Device == "未知设备" ? t.Device : PeerName(t.Device);
+                    cards.Add(new ActivityCard { Time = t.Utc, Action = t.Action, Title = t.Name, LocalPath = t.LocalPath,
+                        Detail = "设备　" + device + (device == t.Device ? "" : "　" + t.Device) });
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                cards.Add(new ActivityCard { Time = DateTime.UtcNow, Action = "记录读取异常", Title = "暂时无法读取文件收发记录", Detail = "稍后可重新打开查看。" });
+                Log("读取文件收发记录失败：" + ex.Message);
+            }
+            foreach (Visit v in _history.Recent)
+            {
+                if (v.Last < DateTime.UtcNow.AddDays(-7)) continue;
+                string count = v.Count > 1 ? "　连续 " + v.Count + " 次" : "";
+                string period = v.Count > 1 ? "　从 " + v.First.Utc.ToLocalTime().ToString("MM-dd HH:mm:ss") + " 开始" : "";
+                cards.Add(new ActivityCard { Time = v.Last, Action = "登录成功" + count,
+                    Title = DeviceLabel(v.First), Detail = "账号　" + v.First.User + period });
+            }
+            if (_historyError != null || cards.Count == 0)
+                cards.Add(new ActivityCard { Time = DateTime.MinValue, Action = "访问记录",
+                    Title = _historyError ?? (_loaded ? "暂无访问记录" : "正在读取登录记录"), Detail = "" });
+            using (ActivityWindow window = new ActivityWindow(cards))
+            {
+                window.Load += delegate { MarkRead(); };
+                window.ShowDialog();
+            }
         }
 
         private void Quit()
@@ -817,6 +913,7 @@ namespace SshBeacon
 
         private void Cleanup()
         {
+            _closing = true;
             try
             {
                 SaveSettings();
@@ -824,6 +921,8 @@ namespace SshBeacon
                 {
                     _tray.Visible = false;
                     _tray.Dispose();
+                    _plainIcon.Dispose();
+                    _unreadIcon.Dispose();
                 }
             }
             catch { }
@@ -860,6 +959,7 @@ namespace SshBeacon
                 lines.Add("autostart=" + (IsAutoStartEnabled() ? "1" : "0"));
                 lines.Add("hint_shown=" + ReadSetting("hint_shown", "1"));
                 lines.Add("first_run_done=1");
+                lines.Add("read_ticks=" + _readTicks.ToString(CultureInfo.InvariantCulture));
                 File.WriteAllLines(_settingsPath, lines.ToArray());
             }
             catch (Exception ex)
@@ -936,7 +1036,10 @@ namespace SshBeacon
             catch { }
         }
 
-        private Icon BuildTrayIcon()
+        [DllImport("user32.dll")]
+        private static extern bool DestroyIcon(IntPtr handle);
+
+        internal static Icon BuildTrayIcon(bool unread)
         {
             using (Bitmap bmp = new Bitmap(32, 32, PixelFormat.Format32bppPArgb))
             {
@@ -944,11 +1047,21 @@ namespace SshBeacon
                 {
                     g.Clear(Color.Transparent);
                     g.SmoothingMode = SmoothingMode.AntiAlias;
-                    g.FillEllipse(new SolidBrush(Color.FromArgb(255, 196, 20)), 6, 6, 20, 20);
-                    g.FillEllipse(new SolidBrush(Color.FromArgb(120, 255, 255, 255)), 10, 9, 8, 6);
+                    using (Brush yellow = new SolidBrush(Color.FromArgb(255, 196, 20)))
+                    using (Brush highlight = new SolidBrush(Color.FromArgb(120, 255, 255, 255)))
+                    {
+                        g.FillEllipse(yellow, 6, 6, 20, 20);
+                        g.FillEllipse(highlight, 10, 9, 8, 6);
+                    }
+                    if (unread)
+                    {
+                        g.FillEllipse(Brushes.SaddleBrown, 18, 0, 14, 14);
+                        g.FillEllipse(Brushes.OrangeRed, 20, 2, 10, 10);
+                    }
                 }
                 IntPtr h = bmp.GetHicon();
-                return Icon.FromHandle(h);
+                try { return (Icon)Icon.FromHandle(h).Clone(); }
+                finally { DestroyIcon(h); }
             }
         }
     }

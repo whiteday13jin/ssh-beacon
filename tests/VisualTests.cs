@@ -21,6 +21,36 @@ namespace SshBeacon
         [STAThread]
         static void Main(string[] args)
         {
+            DateTime when = DateTime.UtcNow;
+            Transfer upload = Transfer.Parse(@"close ""/Desktop/\346\265\213\350\257\225.txt"" bytes read 0 written 24", when, "127.0.0.1");
+            Check(upload.Name == "测试.txt" && upload.Action == "收到文件", "Chinese filename and incoming direction");
+            Check(Transfer.Parse(@"close ""/D:/资料/测试.txt"" bytes read 20 written 0", when, "::1").LocalPath == @"D:\资料\测试.txt", "SFTP drive path displays as a Windows path");
+            Check(Transfer.Parse(@"close ""a.txt"" bytes read 24 written 0", when, "::1").Action == "发出文件", "Outgoing direction");
+            Check(Transfer.Parse(@"close ""a.txt"" bytes read 0 written 0", when, "::1") == null, "Do not infer direction from zero bytes");
+            string folder = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())).FullName;
+            try
+            {
+                DateTime date = when.ToLocalTime().Date;
+                string old = Path.Combine(folder, date.AddDays(-7).ToString("yyyyMMdd") + "_test.tsv");
+                string keep = Path.Combine(folder, date.AddDays(-6).ToString("yyyyMMdd") + "_test.tsv");
+                File.WriteAllText(old, "old");
+                File.WriteAllText(keep, "keep");
+                Transfer.Prune(folder, when);
+                Check(!File.Exists(old) && File.Exists(keep), "Seven local calendar days of file history");
+            }
+            finally { Directory.Delete(folder, true); }
+            string payload = "Accepted publickey for demo from 192.0.2.1 port 49152 ssh2: ED25519";
+            VisitHistory history = new VisitHistory();
+            Check(Login.Parse("Disconnected from 192.0.2.1 port 49152", when) == null, "Disconnect is not a login");
+            Check(history.Add(Login.Parse(payload, when)), "Short authenticated session starts a visit");
+            Check(!history.Add(Login.Parse(payload, when.AddSeconds(60))), "Consecutive logins share a notification");
+            Check(history.Add(Login.Parse(payload.Replace("demo", "guest"), when.AddSeconds(61))), "Separate account starts another visit");
+            Check(history.Add(Login.Parse(payload, when.AddSeconds(121))) && history.Recent[2].Count == 2, "New visit after quiet period preserves earlier count");
+            using (Icon plain = App.BuildTrayIcon(false))
+            using (Icon unread = App.BuildTrayIcon(true))
+            using (Bitmap p = plain.ToBitmap())
+            using (Bitmap u = unread.ToBitmap())
+                Check(u.GetPixel(25, 5).R > 220 && p.GetPixel(25, 5).A == 0, "Unread badge occupies upper right corner");
             using (Bitmap b = new Bitmap(72,72,PixelFormat.Format32bppPArgb))
             {
                 BeaconVisuals.Draw(b, BeaconState.Idle, 0, 0, 6);
