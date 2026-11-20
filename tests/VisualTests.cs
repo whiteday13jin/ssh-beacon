@@ -124,12 +124,13 @@ namespace SshBeacon
                 Check(!dot.Visible && !render.Enabled && !hover.Enabled,"Real idle tick hides dot and stops visual timers");
             }
 
+            if (Array.IndexOf(args, "--preview-sheet") < 0) return;
             using (Bitmap sheet = new Bitmap(840,300))
             using (Graphics g = Graphics.FromImage(sheet))
             using (Font font = new Font("Segoe UI",10))
             using (Bitmap frame = new Bitmap(72,72,PixelFormat.Format32bppPArgb))
             {
-                double[] ages={0.2,1.8,3.6,7.0,10.0,12.6,15.0};
+                double[] ages={0.2,2.4,4.8,7.0,10.0,12.6,15.0};
                 string[] labels={"Arrival","Breath peak","Breath low","Disconnect","Fade 3s","Fade 5.6s","Idle"};
                 for(int row=0;row<2;row++)
                 {
